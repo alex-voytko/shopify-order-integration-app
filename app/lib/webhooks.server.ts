@@ -8,6 +8,7 @@ type WebhookLogEvent = {
   shop?: string;
   topic?: string;
   webhookId?: string;
+  orderId?: string;
   result: string;
 };
 
@@ -18,6 +19,7 @@ export function logWebhookEvent(event: WebhookLogEvent) {
       shop: event.shop,
       topic: event.topic,
       webhookId: event.webhookId,
+      orderId: event.orderId,
       result: event.result,
     }),
   );
@@ -133,6 +135,13 @@ export async function verifyShopifyWebhook(
 
 export function webhookOk() {
   return new Response(null, { status: 200 });
+}
+
+export function webhookError(status: number, message: string, code: string): never {
+  throw new Response(JSON.stringify({ error: message, code }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
 }
 
 export function webhookMethodNotAllowed() {

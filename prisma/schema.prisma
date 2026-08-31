@@ -53,20 +53,21 @@ model Shop {
 // Unique per store: shopDomain + shopifyOrderId.
 // Prices are Decimal (string-backed on SQLite) to avoid float math.
 model Order {
-  id               String     @id @default(cuid())
-  shopDomain       String
-  shopifyOrderId   String
-  customerEmail    String?
-  totalPrice       Decimal
-  currency         String
-  tags             String     @default("")
-  shopifyCreatedAt DateTime
-  shopifyUpdatedAt DateTime
-  processedAt      DateTime
-  lineItems        LineItem[]
-  shop             Shop       @relation(fields: [shopDomain], references: [shopDomain], onDelete: Restrict)
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+  id                    String     @id @default(cuid())
+  shopDomain            String
+  shopifyOrderId        String
+  customerEmail         String?
+  totalPrice            Decimal
+  currency              String
+  tags                  String     @default("")
+  shopifyCreatedAt      DateTime
+  shopifyUpdatedAt      DateTime
+  processedAt           DateTime
+  analyticsTagAppliedAt DateTime?
+  lineItems             LineItem[]
+  shop                  Shop       @relation(fields: [shopDomain], references: [shopDomain], onDelete: Restrict)
+  createdAt             DateTime   @default(now())
+  updatedAt             DateTime   @updatedAt
 
   @@unique([shopDomain, shopifyOrderId])
   @@index([shopDomain])
