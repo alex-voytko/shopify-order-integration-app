@@ -1,17 +1,36 @@
 import type { ActionFunctionArgs } from "react-router";
-import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { invalidateShopAccess } from "../models/shop.server";
+import {
+  logWebhookEvent,
+  verifyShopifyWebhook,
+  webhookMethodNotAllowed,
+  webhookOk,
+} from "../lib/webhooks.server";
+
+export const loader = webhookMethodNotAllowed;
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic, webhookId } = await verifyShopifyWebhook(request, {
+    expectedTopic: "app/uninstalled",
+  });
 
-  console.log(`Received ${topic} webhook for ${shop}`);
-
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
+  try {
+    // Sessions and tokens are removed. Order history is kept for reinstalls.
+    await invalidateShopAccess(shop);
+    logWebhookEvent({
+      shop,
+      topic,
+      webhookId,
+      result: "uninstalled",
+    });
+    return webhookOk();
+  } catch {
+    logWebhookEvent({
+      shop,
+      topic,
+      webhookId,
+      result: "error",
+    });
+    throw new Response("Uninstall processing failed", { status: 500 });
   }
-
-  return new Response();
 };

@@ -60,3 +60,33 @@ export async function markShopUninstalled(shopDomain: string) {
     },
   });
 }
+
+export async function deleteShopSessions(shopDomain: string) {
+  const domain = normalizeShopDomain(shopDomain);
+
+  return prisma.session.deleteMany({
+    where: {
+      shop: { in: [shopDomain, domain] },
+    },
+  });
+}
+
+/** Removes credentials and marks the shop uninstalled. Order rows are kept. */
+export async function invalidateShopAccess(shopDomain: string) {
+  const domain = normalizeShopDomain(shopDomain);
+
+  return prisma.$transaction([
+    prisma.session.deleteMany({
+      where: {
+        shop: { in: [shopDomain, domain] },
+      },
+    }),
+    prisma.shop.updateMany({
+      where: { shopDomain: domain },
+      data: {
+        isInstalled: false,
+        uninstalledAt: new Date(),
+      },
+    }),
+  ]);
+}
