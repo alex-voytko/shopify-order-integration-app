@@ -1,8 +1,13 @@
-import type { WebhookContext } from "@shopify/shopify-app-react-router/server";
 import { authenticate } from "../shopify.server";
 import { verifyShopifyHmac } from "./hmac.server";
+import {
+  headerValue,
+  webhookContextFromSignedHeaders,
+  type VerifiedWebhook,
+} from "./webhook-context.server";
 
-export type VerifiedWebhook = WebhookContext;
+export type { VerifiedWebhook };
+export { webhookContextFromSignedHeaders };
 
 type WebhookLogEvent = {
   shop?: string;
@@ -29,15 +34,6 @@ export function normalizeWebhookTopic(topic: string) {
   return topic.trim().toLowerCase().replace(/_/g, "/");
 }
 
-function headerValue(request: Request, name: string) {
-  return request.headers.get(name) ?? undefined;
-}
-
-/**
- * Verifies X-Shopify-Hmac-Sha256 against the raw body, then lets the
- * Shopify library parse headers. The shop always comes from verified
- * webhook metadata, never from the JSON body.
- */
 export async function verifyShopifyWebhook(
   request: Request,
   options?: { expectedTopic?: string | string[] },
@@ -67,9 +63,18 @@ export async function verifyShopifyWebhook(
     throw new Response("Unauthorized", { status: 401 });
   }
 
+  if (!headerShop || !headerTopic) {
+    logWebhookEvent({
+      shop: headerShop,
+      topic: headerTopic,
+      result: "rejected_invalid_webhook",
+    });
+    throw new Response("Bad Request", { status: 400 });
+  }
+
   const verifiedRequest = new Request(request.url, {
-    method: request.method,
-    headers: request.headers,
+    method: "POST",
+    headers: new Headers(request.headers),
     body: rawBody,
   });
 
@@ -78,18 +83,11 @@ export async function verifyShopifyWebhook(
   try {
     webhook = await authenticate.webhook(verifiedRequest);
   } catch (error) {
-    if (error instanceof Response) {
-      const result =
-        error.status === 401
-          ? "rejected_invalid_hmac"
-          : error.status === 405
-            ? "rejected_method"
-            : "rejected_invalid_webhook";
-
+    if (error instanceof Response && error.status === 405) {
       logWebhookEvent({
         shop: headerShop,
         topic: headerTopic,
-        result,
+        result: "rejected_method",
       });
       throw error;
     }
@@ -103,12 +101,25 @@ export async function verifyShopifyWebhook(
       throw new Response("Bad Request", { status: 400 });
     }
 
-    logWebhookEvent({
-      shop: headerShop,
-      topic: headerTopic,
-      result: "error",
-    });
-    throw new Response("Internal Server Error", { status: 500 });
+    try {
+      webhook = webhookContextFromSignedHeaders(request, rawBody);
+    } catch (fallbackError) {
+      if (fallbackError instanceof SyntaxError) {
+        logWebhookEvent({
+          shop: headerShop,
+          topic: headerTopic,
+          result: "rejected_malformed_payload",
+        });
+        throw new Response("Bad Request", { status: 400 });
+      }
+
+      logWebhookEvent({
+        shop: headerShop,
+        topic: headerTopic,
+        result: "rejected_invalid_webhook",
+      });
+      throw new Response("Bad Request", { status: 400 });
+    }
   }
 
   if (options?.expectedTopic) {

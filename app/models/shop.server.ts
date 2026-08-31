@@ -71,22 +71,53 @@ export async function deleteShopSessions(shopDomain: string) {
   });
 }
 
-/** Removes credentials and marks the shop uninstalled. Order rows are kept. */
-export async function invalidateShopAccess(shopDomain: string) {
-  const domain = normalizeShopDomain(shopDomain);
+function parseWebhookTriggeredAt(value?: string | Date | null) {
+  if (!value) {
+    return null;
+  }
 
-  return prisma.$transaction([
-    prisma.session.deleteMany({
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+/**
+ * Removes credentials and marks the shop uninstalled. Order rows are kept.
+ * A delayed retry of app/uninstalled must not wipe a newer reinstall.
+ */
+export async function invalidateShopAccess(
+  shopDomain: string,
+  options?: { triggeredAt?: string | Date | null },
+) {
+  const domain = normalizeShopDomain(shopDomain);
+  const triggeredAt = parseWebhookTriggeredAt(options?.triggeredAt ?? null);
+
+  return prisma.$transaction(async (tx) => {
+    const shop = await tx.shop.findUnique({
+      where: { shopDomain: domain },
+      select: { isInstalled: true, installedAt: true },
+    });
+
+    if (
+      shop?.isInstalled &&
+      triggeredAt &&
+      shop.installedAt.getTime() > triggeredAt.getTime()
+    ) {
+      return "ignored_stale" as const;
+    }
+
+    await tx.session.deleteMany({
       where: {
         shop: { in: [shopDomain, domain] },
       },
-    }),
-    prisma.shop.updateMany({
+    });
+    await tx.shop.updateMany({
       where: { shopDomain: domain },
       data: {
         isInstalled: false,
         uninstalledAt: new Date(),
       },
-    }),
-  ]);
+    });
+
+    return "uninstalled" as const;
+  });
 }
