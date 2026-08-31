@@ -1,251 +1,203 @@
-import { useEffect } from "react";
-import type {
-  ActionFunctionArgs,
-  HeadersFunction,
-  LoaderFunctionArgs,
-} from "react-router";
-import { useFetcher } from "react-router";
-import { useAppBridge } from "@shopify/app-bridge-react";
-import { authenticate } from "../shopify.server";
+import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
+import { formatDateTime, formatMoneyAmount } from "../lib/format";
+import type { OrderApiItem } from "../lib/order-api";
+import {
+  getLatestOrderProcessedAt,
+  getShopAnalytics,
+  listOrdersForShop,
+} from "../models/order.server";
+import { requireInstalledShop } from "../models/shop.server";
+import { authenticate } from "../shopify.server";
+
+const PAGE_SIZE = 25;
+const REGISTERED_WEBHOOKS = [
+  "orders/create",
+  "orders/updated",
+  "app/uninstalled",
+] as const;
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await authenticate.admin(request);
+  const { session } = await authenticate.admin(request);
+  const shop = await requireInstalledShop(session.shop);
 
-  return null;
-};
+  const url = new URL(request.url);
+  const offsetRaw = url.searchParams.get("offset");
+  const parsedOffset = offsetRaw == null ? 0 : Number.parseInt(offsetRaw, 10);
+  const offset = Number.isInteger(parsedOffset) && parsedOffset >= 0 ? parsedOffset : 0;
 
-export const action = async ({ request }: ActionFunctionArgs) => {
-  const { admin } = await authenticate.admin(request);
-  const color = ["Red", "Orange", "Yellow", "Green"][
-    Math.floor(Math.random() * 4)
-  ];
-  const response = await admin.graphql(
-    `#graphql
-      mutation populateProduct($product: ProductCreateInput!) {
-        productCreate(product: $product) {
-          product {
-            id
-            title
-            handle
-            status
-            variants(first: 10) {
-              edges {
-                node {
-                  id
-                  price
-                  barcode
-                  createdAt
-                }
-              }
-            }
-          }
-        }
-      }`,
-    {
-      variables: {
-        product: {
-          title: `${color} Snowboard`,
-        },
-      },
-    },
-  );
-  const responseJson = await response.json();
-
-  const product = responseJson.data!.productCreate!.product!;
-  const variantId = product.variants.edges[0]!.node!.id!;
-
-  const variantResponse = await admin.graphql(
-    `#graphql
-    mutation shopifyReactRouterTemplateUpdateVariant($productId: ID!, $variants: [ProductVariantsBulkInput!]!) {
-      productVariantsBulkUpdate(productId: $productId, variants: $variants) {
-        productVariants {
-          id
-          price
-          barcode
-          createdAt
-        }
-      }
-    }`,
-    {
-      variables: {
-        productId: product.id,
-        variants: [{ id: variantId, price: "100.00" }],
-      },
-    },
-  );
-
-  const variantResponseJson = await variantResponse.json();
+  const [analytics, orderPage, lastProcessedAt] = await Promise.all([
+    getShopAnalytics(session.shop),
+    listOrdersForShop(session.shop, { limit: PAGE_SIZE, offset }),
+    getLatestOrderProcessedAt(session.shop),
+  ]);
 
   return {
-    product: responseJson!.data!.productCreate!.product,
-    variant:
-      variantResponseJson!.data!.productVariantsBulkUpdate!.productVariants,
+    shopDomain: shop.shopDomain,
+    connection: {
+      installed: shop.isInstalled,
+      webhooks: REGISTERED_WEBHOOKS,
+      lastProcessedAt: lastProcessedAt?.toISOString() ?? null,
+    },
+    analytics: {
+      totalOrders: analytics.totalOrders,
+      totalRevenue: analytics.totalRevenue.toFixed(2),
+      topSku: analytics.topSku,
+    },
+    orders: orderPage.orders,
+    pagination: {
+      limit: PAGE_SIZE,
+      offset,
+      total: orderPage.total,
+    },
   };
 };
 
-export default function Index() {
-  const fetcher = useFetcher<typeof action>();
-
-  const shopify = useAppBridge();
-  const isLoading =
-    ["loading", "submitting"].includes(fetcher.state) &&
-    fetcher.formMethod === "POST";
-
-  useEffect(() => {
-    if (fetcher.data?.product?.id) {
-      shopify.toast.show("Product created");
-    }
-  }, [fetcher.data?.product?.id, shopify]);
-
-  const generateProduct = () => fetcher.submit({}, { method: "POST" });
+export default function Dashboard() {
+  const { shopDomain, connection, analytics, orders, pagination } =
+    useLoaderData<typeof loader>();
+  const hasPrevious = pagination.offset > 0;
+  const hasNext = pagination.offset + pagination.limit < pagination.total;
+  const previousOffset = Math.max(pagination.offset - pagination.limit, 0);
+  const nextOffset = pagination.offset + pagination.limit;
 
   return (
-    <s-page heading="Shopify app template">
-      <s-button slot="primary-action" onClick={generateProduct}>
-        Generate a product
-      </s-button>
-
-      <s-section heading="Congrats on creating a new Shopify app 🎉">
+    <s-page heading="Order analytics" inlineSize="large">
+      <s-section heading="Overview">
         <s-paragraph>
-          This embedded app template uses{" "}
-          <s-link
-            href="https://shopify.dev/docs/apps/tools/app-bridge"
-            target="_blank"
-          >
-            App Bridge
-          </s-link>{" "}
-          interface examples like an{" "}
-          <s-link href="/app/additional">additional page in the app nav</s-link>
-          , as well as an{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            Admin GraphQL
-          </s-link>{" "}
-          mutation demo, to provide a starting point for app development.
+          Metrics for <s-text type="strong">{shopDomain}</s-text>. Data comes
+          from verified Shopify webhooks for this store only.
         </s-paragraph>
+        <s-grid gridTemplateColumns="repeat(4, 1fr)" gap="base">
+          <MetricCard label="Total orders" value={String(analytics.totalOrders)} />
+          <MetricCard
+            label="Total revenue"
+            value={formatMoneyAmount(analytics.totalRevenue)}
+          />
+          <MetricCard label="Top-selling SKU" value={analytics.topSku ?? "—"} />
+          <MetricCard
+            label="Connection"
+            value={connection.installed ? "Connected" : "Disconnected"}
+          />
+        </s-grid>
       </s-section>
-      <s-section heading="Get started with products">
-        <s-paragraph>
-          Generate a product with GraphQL and get the JSON output for that
-          product. Learn more about the{" "}
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql/latest/mutations/productCreate"
-            target="_blank"
-          >
-            productCreate
-          </s-link>{" "}
-          mutation in our API references.
-        </s-paragraph>
-        <s-stack direction="inline" gap="base">
-          <s-button
-            onClick={generateProduct}
-            {...(isLoading ? { loading: true } : {})}
-          >
-            Generate a product
-          </s-button>
-          {fetcher.data?.product && (
-            <s-button
-              onClick={() => {
-                shopify.intents.invoke?.("edit:shopify/Product", {
-                  value: fetcher.data?.product?.id,
-                });
-              }}
-              target="_blank"
-              variant="tertiary"
-            >
-              Edit product
-            </s-button>
-          )}
-        </s-stack>
-        {fetcher.data?.product && (
-          <s-section heading="productCreate mutation">
-            <s-stack direction="block" gap="base">
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.product, null, 2)}</code>
-                </pre>
-              </s-box>
 
-              <s-heading>productVariantsBulkUpdate mutation</s-heading>
-              <s-box
-                padding="base"
-                borderWidth="base"
-                borderRadius="base"
-                background="subdued"
-              >
-                <pre style={{ margin: 0 }}>
-                  <code>{JSON.stringify(fetcher.data.variant, null, 2)}</code>
-                </pre>
-              </s-box>
-            </s-stack>
-          </s-section>
+      <s-section heading="Webhook status">
+        <s-stack direction="block" gap="base">
+          <s-stack direction="inline" gap="base">
+            <s-badge tone={connection.installed ? "success" : "critical"}>
+              {connection.installed ? "App installed" : "App not installed"}
+            </s-badge>
+            {connection.webhooks.map((topic) => (
+              <s-badge key={topic} tone="info">
+                {topic}
+              </s-badge>
+            ))}
+          </s-stack>
+          <s-paragraph>
+            Last webhook processed:{" "}
+            {formatDateTime(connection.lastProcessedAt)}
+          </s-paragraph>
+        </s-stack>
+      </s-section>
+
+      <s-section heading="Recent orders" padding="none">
+        {orders.length === 0 ? (
+          <s-box padding="base">
+            <s-paragraph>
+              No orders received yet. Create an order in this store to see it
+              here after the webhook is processed.
+            </s-paragraph>
+          </s-box>
+        ) : (
+          <s-table>
+            <s-table-header-row>
+              <s-table-header listSlot="primary">Order ID</s-table-header>
+              <s-table-header listSlot="secondary">Customer email</s-table-header>
+              <s-table-header listSlot="labeled" format="currency">
+                Total price
+              </s-table-header>
+              <s-table-header listSlot="labeled">Currency</s-table-header>
+              <s-table-header listSlot="labeled" format="numeric">
+                Items
+              </s-table-header>
+              <s-table-header listSlot="inline">Tags</s-table-header>
+              <s-table-header listSlot="labeled">Created</s-table-header>
+              <s-table-header listSlot="labeled">Updated</s-table-header>
+            </s-table-header-row>
+            <s-table-body>
+              {orders.map((order: OrderApiItem) => (
+                <s-table-row key={order.order_id}>
+                  <s-table-cell>{order.order_id}</s-table-cell>
+                  <s-table-cell>{order.customer_email ?? "—"}</s-table-cell>
+                  <s-table-cell>
+                    {formatMoneyAmount(order.total_price)}
+                  </s-table-cell>
+                  <s-table-cell>{order.currency}</s-table-cell>
+                  <s-table-cell>{order.items_count}</s-table-cell>
+                  <s-table-cell>
+                    {order.tags.length === 0 ? (
+                      "—"
+                    ) : (
+                      <s-stack direction="inline" gap="small">
+                        {order.tags.map((tag: string) => (
+                          <s-badge
+                            key={tag}
+                            tone={
+                              tag === "analytics-processed" ? "success" : "neutral"
+                            }
+                          >
+                            {tag}
+                          </s-badge>
+                        ))}
+                      </s-stack>
+                    )}
+                  </s-table-cell>
+                  <s-table-cell>{formatDateTime(order.created_at)}</s-table-cell>
+                  <s-table-cell>{formatDateTime(order.updated_at)}</s-table-cell>
+                </s-table-row>
+              ))}
+            </s-table-body>
+          </s-table>
         )}
       </s-section>
 
-      <s-section slot="aside" heading="App template specs">
-        <s-paragraph>
-          <s-text>Framework: </s-text>
-          <s-link href="https://reactrouter.com/" target="_blank">
-            React Router
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Interface: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/app-home/using-polaris-components"
-            target="_blank"
-          >
-            Polaris web components
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>API: </s-text>
-          <s-link
-            href="https://shopify.dev/docs/api/admin-graphql"
-            target="_blank"
-          >
-            GraphQL
-          </s-link>
-        </s-paragraph>
-        <s-paragraph>
-          <s-text>Database: </s-text>
-          <s-link href="https://www.prisma.io/" target="_blank">
-            Prisma
-          </s-link>
-        </s-paragraph>
-      </s-section>
-
-      <s-section slot="aside" heading="Next steps">
-        <s-unordered-list>
-          <s-list-item>
-            Build an{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/getting-started/build-app-example"
-              target="_blank"
-            >
-              example app
-            </s-link>
-          </s-list-item>
-          <s-list-item>
-            Explore Shopify&apos;s API with{" "}
-            <s-link
-              href="https://shopify.dev/docs/apps/tools/graphiql-admin-api"
-              target="_blank"
-            >
-              GraphiQL
-            </s-link>
-          </s-list-item>
-        </s-unordered-list>
-      </s-section>
+      {pagination.total > pagination.limit ? (
+        <s-section>
+          <s-stack direction="inline" gap="base">
+            {hasPrevious ? (
+              <s-link href={`/app?offset=${previousOffset}`}>Previous</s-link>
+            ) : null}
+            <s-text>
+              Showing {pagination.offset + 1}–
+              {Math.min(pagination.offset + orders.length, pagination.total)} of{" "}
+              {pagination.total}
+            </s-text>
+            {hasNext ? (
+              <s-link href={`/app?offset=${nextOffset}`}>Next</s-link>
+            ) : null}
+          </s-stack>
+        </s-section>
+      ) : null}
     </s-page>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <s-grid-item>
+      <s-box
+        padding="base"
+        background="base"
+        borderWidth="base"
+        borderColor="base"
+        borderRadius="base"
+      >
+        <s-heading>{label}</s-heading>
+        <s-text type="strong">{value}</s-text>
+      </s-box>
+    </s-grid-item>
   );
 }
 

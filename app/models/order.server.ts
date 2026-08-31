@@ -2,21 +2,13 @@ import { Prisma } from "@prisma/client";
 import type { AdminApiContext } from "@shopify/shopify-app-react-router/server";
 import prisma from "../db.server";
 import { decimalToJsonNumber } from "../lib/money.server";
+import type { OrderApiItem } from "../lib/order-api";
 import type { ValidatedLineItem, ValidatedOrder } from "../lib/order-payload.server";
 import { hasAnalyticsTag, mergeAnalyticsTag, splitTags } from "../lib/order-tags.server";
 import { addAnalyticsProcessedTag } from "../lib/shopify-order-tag.server";
 import { normalizeShopDomain } from "./shop.server";
 
-export type OrderApiItem = {
-  order_id: number;
-  customer_email: string | null;
-  total_price: number;
-  currency: string;
-  items_count: number;
-  tags: string[];
-  created_at: string;
-  updated_at: string;
-};
+export type { OrderApiItem };
 
 export type CreateOrderResult = "created" | "duplicate";
 
@@ -236,8 +228,7 @@ export async function listOrdersForShop(
     prisma.order.count({ where: { shopDomain: domain } }),
   ]);
 
-  return {
-    orders: orders.map((order) => ({
+  const mappedOrders: OrderApiItem[] = orders.map((order) => ({
       order_id: Number.parseInt(order.shopifyOrderId, 10),
       customer_email: order.customerEmail,
       total_price: decimalToJsonNumber(order.totalPrice),
@@ -249,7 +240,10 @@ export async function listOrdersForShop(
       tags: splitTags(order.tags),
       created_at: order.shopifyCreatedAt.toISOString(),
       updated_at: order.shopifyUpdatedAt.toISOString(),
-    })),
+  }));
+
+  return {
+    orders: mappedOrders,
     total,
   };
 }
@@ -292,6 +286,18 @@ export async function getShopAnalytics(shopDomain: string) {
     totalRevenue: revenue._sum.totalPrice ?? new Prisma.Decimal(0),
     topSku,
   };
+}
+
+export async function getLatestOrderProcessedAt(shopDomain: string) {
+  const domain = normalizeShopDomain(shopDomain);
+
+  const latest = await prisma.order.findFirst({
+    where: { shopDomain: domain },
+    orderBy: { processedAt: "desc" },
+    select: { processedAt: true },
+  });
+
+  return latest?.processedAt ?? null;
 }
 
 function buildOrderCreateData(shopDomain: string, order: ValidatedOrder) {
