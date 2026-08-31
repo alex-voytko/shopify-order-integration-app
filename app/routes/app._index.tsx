@@ -102,14 +102,12 @@ export default function Dashboard() {
         </s-stack>
       </s-section>
 
-      <s-section heading="Recent orders" padding="none">
-        {orders.length === 0 ? (
-          <s-box padding="base">
-            <s-paragraph>
-              No orders received yet. Create an order in this store to see it
-              here after the webhook is processed.
-            </s-paragraph>
-          </s-box>
+      <s-section heading="Recent orders" padding="base">
+        {!orders?.length ? (
+          <s-paragraph>
+            No orders received yet. Create an order in this store to see it
+            here after the webhook is processed.
+          </s-paragraph>
         ) : (
           <s-table>
             <s-table-header-row>

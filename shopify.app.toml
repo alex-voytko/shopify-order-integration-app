@@ -1,53 +1,35 @@
-# This file stores configurations for your Shopify app.
-client_id = ""
+# Learn more about configuring your app at https://shopify.dev/docs/apps/tools/cli/configuration
+
+client_id = "8dfb45f3e910f69486375fe3de927082"
+name = "Order integration app"
+application_url = "https://afdd-95-158-49-222.ngrok-free.app"
+embedded = true
+
+[build]
+automatically_update_urls_on_dev = true
+
+[webhooks]
+api_version = "2026-10"
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/uninstalled"
+  topics = [ "app/uninstalled" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/updated"
+  topics = [ "orders/updated" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/app/scopes_update"
+  topics = [ "app/scopes_update" ]
+
+  [[webhooks.subscriptions]]
+  uri = "/webhooks/orders/create"
+  topics = [ "orders/create" ]
 
 [access_scopes]
-# Only the scopes required to receive order webhooks and add the analytics tag.
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
 scopes = "read_orders,write_orders"
 
-[webhooks]
-api_version = "2026-07"
-
-  # App-specific subscriptions. Shopify syncs these on `shopify app dev` / deploy.
-  # Handled by: /app/routes/webhooks.app.uninstalled.tsx
-  [[webhooks.subscriptions]]
-  uri = "/webhooks/app/uninstalled"
-  topics = ["app/uninstalled"]
-
-  # Handled by: /app/routes/webhooks.app.scopes_update.tsx
-  [[webhooks.subscriptions]]
-  topics = ["app/scopes_update"]
-  uri = "/webhooks/app/scopes_update"
-
-  # Handled by: /app/routes/webhooks.orders.create.tsx
-  [[webhooks.subscriptions]]
-  uri = "/webhooks/orders/create"
-  topics = ["orders/create"]
-
-  # Handled by: /app/routes/webhooks.orders.updated.tsx
-  [[webhooks.subscriptions]]
-  uri = "/webhooks/orders/updated"
-  topics = ["orders/updated"]
-
-  # Webhooks can have filters
-  # Only receive webhooks for product updates with a product price >= 10.00
-  # See: https://shopify.dev/docs/apps/build/webhooks/customize/filters
-  # [[webhooks.subscriptions]]
-  # topics = ["products/update"]
-  # uri = "/webhooks/products/update"
-  # filter = "variants.price:>=10.00"
-
-  # Mandatory compliance topic for public apps only
-  # See: https://shopify.dev/docs/apps/build/privacy-law-compliance
-  # [[webhooks.subscriptions]]
-  # uri = "/webhooks/customers/data_request"
-  # compliance_topics = ["customers/data_request"]
-
-  # [[webhooks.subscriptions]]
-  # uri = "/webhooks/customers/redact"
-  # compliance_topics = ["customers/redact"]
-
-  # [[webhooks.subscriptions]]
-  # uri = "/webhooks/shop/redact"
-  # compliance_topics = ["shop/redact"]
+[auth]
+redirect_urls = [ "https://afdd-95-158-49-222.ngrok-free.app/auth/callback" ]
