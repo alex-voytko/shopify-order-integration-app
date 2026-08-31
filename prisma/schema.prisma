@@ -1,0 +1,86 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// SQLite is enough for local development and a single-instance demo.
+// In production, set DATABASE_URL and switch the provider (e.g. PostgreSQL).
+// See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Required by @shopify/shopify-app-session-storage-prisma.
+// Access tokens live only here — never send them to the frontend or logs.
+model Session {
+  id                  String    @id
+  shop                String
+  state               String
+  isOnline            Boolean   @default(false)
+  scope               String?
+  expires             DateTime?
+  accessToken         String
+  userId              BigInt?
+  firstName           String?
+  lastName            String?
+  email               String?
+  accountOwner        Boolean   @default(false)
+  locale              String?
+  collaborator        Boolean?  @default(false)
+  emailVerified       Boolean?  @default(false)
+  refreshToken        String?
+  refreshTokenExpires DateTime?
+
+  @@index([shop])
+}
+
+// One row per Shopify store that has installed the app.
+// Uninstall marks the row (isInstalled = false) and keeps historical orders.
+model Shop {
+  id            String    @id @default(cuid())
+  shopDomain    String    @unique
+  isInstalled   Boolean   @default(true)
+  installedAt   DateTime  @default(now())
+  uninstalledAt DateTime?
+  orders        Order[]
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Unique per store: shopDomain + shopifyOrderId.
+// Prices are Decimal (string-backed on SQLite) to avoid float math.
+model Order {
+  id               String     @id @default(cuid())
+  shopDomain       String
+  shopifyOrderId   String
+  customerEmail    String?
+  totalPrice       Decimal
+  currency         String
+  tags             String     @default("")
+  shopifyCreatedAt DateTime
+  shopifyUpdatedAt DateTime
+  processedAt      DateTime
+  lineItems        LineItem[]
+  shop             Shop       @relation(fields: [shopDomain], references: [shopDomain], onDelete: Restrict)
+  createdAt        DateTime   @default(now())
+  updatedAt        DateTime   @updatedAt
+
+  @@unique([shopDomain, shopifyOrderId])
+  @@index([shopDomain])
+}
+
+model LineItem {
+  id                String @id @default(cuid())
+  orderId           String
+  shopifyLineItemId String?
+  sku               String @default("")
+  quantity          Int
+  price             Decimal
+  order             Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([orderId])
+  @@index([sku])
+}
