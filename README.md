@@ -16,8 +16,6 @@ Embedded Shopify app that receives order webhooks, stores them per store, and sh
 
 ---
 
-
-
 ## Prerequisites
 
 - Node.js 20.19+ or 22.12+
@@ -27,8 +25,6 @@ Embedded Shopify app that receives order webhooks, stores them per store, and sh
 - A [development store](https://shopify.dev/docs/apps/tools/development-stores)
 
 ---
-
-
 
 ## Setup
 
@@ -52,8 +48,6 @@ npm run typecheck
 
 ---
 
-
-
 ## Shopify application configuration
 
 Configured in `shopify.app.toml`. CLI syncs webhooks on `shopify app dev` / `shopify app deploy`. Do not register them in the Admin UI.
@@ -73,18 +67,28 @@ Configured in `shopify.app.toml`. CLI syncs webhooks on `shopify app dev` / `sho
 
 ## Run locally and install
 
+On the first run, use `--reset` so the CLI does not reuse the `client_id` committed in `shopify.app.toml` (that app belongs to the author’s Partner org). `--reset` asks you to create or link **your** app and pick **your** development store:
+
 ```bash
-npm run dev
+npm run dev -- --reset
 ```
 
-If you are not logged in, the CLI prompts for Shopify auth. The first time, create or link an app and pick a development store. Press `p`, then **Install app**. After that, open the app from Admin → **Apps**.
+Later starts can omit `--reset`. If the CLI picks the wrong org, app, or store, run it again with `--reset`.
+
+If you are not logged in, the CLI prompts for Shopify auth. To walk through that from scratch (or if the CLI is logged into the wrong account), run `shopify auth logout` first — it is not required when the current session is already correct.
+
+Press `p`, then **Install app**. After that, open the app from Admin → **Apps**.
 
 After install a `Shop` row and an offline `Session` (access token) are stored. The dashboard is `/app`. Each store’s rows are isolated by shop domain; install on another development store the same way.
 
-Shopify needs a public **HTTPS** URL for OAuth, the embedded Admin, and webhooks. `shopify app dev` usually opens a Cloudflare tunnel for that. If that tunnel fails (it often does from some networks), install a separate HTTPS tunnel tool and point it at local port `3000` — for example [ngrok](https://ngrok.com/) (`ngrok http 3000`) or another provider. Then tell the CLI about that URL. `:443` is the public HTTPS port of the tunnel, not your local port:
+Shopify needs a public **HTTPS** URL for OAuth, the embedded Admin, and webhooks. `shopify app dev` usually opens a Cloudflare tunnel for that. If that tunnel fails (it often does from some networks), install a separate HTTPS tunnel tool and point it at local port `3000` — for example [ngrok](https://ngrok.com/) (`ngrok http 3000`) or another provider. Then pass that public hostname to the CLI. The port in `--tunnel-url` is the **local** app port (where the CLI proxy listens).
 
 ```bash
-npm run dev -- --tunnel-url=https://YOUR-TUNNEL-HOST.example:443
+# terminal 1
+ngrok http 3000
+
+# terminal 2 — host from ngrok, port 3000 (local)
+npm run dev -- --tunnel-url=https://YOUR-TUNNEL-HOST.ngrok-free.app:3000
 ```
 
 Do not put a temporary tunnel URL into `application_url` and `shopify app deploy`. The CLI should own the tunnel via `--tunnel-url` so it stays in sync when the host changes.
@@ -105,8 +109,6 @@ Protected JSON APIs (same auth): `GET /api/orders?limit=50&offset=0`, `GET /api/
 
 ---
 
-
-
 ## How to verify (after install)
 
 Keep the tunnel running. Refresh the dashboard after each step.
@@ -123,8 +125,6 @@ Invalid HMAC → `401`. Bad prices/quantities → `400`.
 
 ---
 
-
-
 ## Authentication and webhook verification
 
 **Admin / dashboard.** Embedded App Bridge session token. Backend `authenticate.admin(request)` verifies it and loads the offline session. Shop is always `session.shop`. Query params and bodies are ignored.
@@ -135,11 +135,9 @@ Logs: shop, topic, order id, result. No tokens, secrets, or full customer payloa
 
 ---
 
-
-
 ## Duplicate-order handling
 
-Unique index: **`shopDomain + shopifyOrderId`**.
+Unique index: `shopDomain + shopifyOrderId`.
 
 A repeated `orders/create` returns `200`, does not insert another row, and does not change totals or SKU quantities. A delayed create after `orders/updated` does not overwrite the newer stored state.
 
@@ -167,7 +165,7 @@ Trade-off: two concurrent first updates could call `tagsAdd` twice. The mutation
 - **Missing email** → `null`. Empty **SKU** → `""` and ignored for `top_sku`.
 - **Prices** are `Decimal` in the database. JSON APIs expose numbers at the response boundary.
 - **SQLite** for local/demo. One process is enough. Production: Postgres + `DATABASE_URL`.
-- **`shopify app webhook trigger`** uses a fake shop; tagging may be `skipped_no_admin`. Prefer a real Admin order.
+- `shopify app webhook trigger` uses a fake shop; tagging may be `skipped_no_admin`. Prefer a real Admin order.
 - **Dashboard** reads the DB in the route loader (same isolation as `/api/*`).
 - A delayed `app/uninstalled` retry after reinstall is ignored if `installedAt` is newer than the webhook trigger time.
 
@@ -177,14 +175,16 @@ Trade-off: two concurrent first updates could call `tagsAdd` twice. The mutation
 
 See `.env.example`. `shopify app dev` fills the Shopify values.
 
-| Variable | Purpose |
-| --- | --- |
-| `SHOPIFY_API_KEY` | App client ID |
-| `SHOPIFY_API_SECRET` | OAuth and webhook HMAC |
-| `SHOPIFY_APP_URL` | Public HTTPS URL |
-| `SCOPES` | Must match `shopify.app.toml` |
-| `DATABASE_URL` | Prisma URL |
+
+| Variable             | Purpose                       |
+| -------------------- | ----------------------------- |
+| `SHOPIFY_API_KEY`    | App client ID                 |
+| `SHOPIFY_API_SECRET` | OAuth and webhook HMAC        |
+| `SHOPIFY_APP_URL`    | Public HTTPS URL              |
+| `SCOPES`             | Must match `shopify.app.toml` |
+| `DATABASE_URL`       | Prisma URL                    |
 | `SHOP_CUSTOM_DOMAIN` | Optional; Plus custom domains |
+
 
 ---
 
@@ -199,5 +199,4 @@ app/
 prisma/
 shopify.app.toml
 ```
-
 
